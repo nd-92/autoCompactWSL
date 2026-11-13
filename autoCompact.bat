@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 :: =====================================================
 :: Auto-compact WSL2 VHDX files using diskpart
-:: Must be run as Administrator (auto‑elevates if needed)
+:: Now locates distros via the WSL registry key
 :: =====================================================
 
 :: Check for admin rights
@@ -17,22 +17,23 @@ if %errorlevel% neq 0 (
 echo Shutting down all WSL instances...
 wsl --shutdown
 
-:: Define search paths
-set "base1=%LOCALAPPDATA%\wsl"
-set "base2=%LOCALAPPDATA%\Packages"
-
 :: Temporary list file
 set "listfile=%TEMP%\wsl_vhdx_list.txt"
 if exist "%listfile%" del "%listfile%"
 
-:: Collect all ext4.vhdx files
-if exist "%base1%" (
-    echo Searching in %base1% ...
-    dir /s /b "%base1%\ext4.vhdx" 2>nul >> "%listfile%"
-)
-if exist "%base2%" (
-    echo Searching in %base2% ...
-    dir /s /b "%base2%\ext4.vhdx" 2>nul >> "%listfile%"
+:: Enumerate WSL distros from the registry
+echo Reading WSL distribution paths from the registry...
+for /f "tokens=*" %%K in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss" /s /v BasePath 2^>nul ^| findstr /i "BasePath"') do (
+    :: The line looks like: BasePath    REG_SZ    \\?\D:\WSL\Ubuntu
+    for /f "tokens=2*" %%A in ('echo %%K') do (
+        set "basePath=%%B"
+        :: BasePath may begin with \\?\ ; strip it for diskpart compatibility
+        set "basePath=!basePath:\\?\=!"
+        set "vhdx=!basePath!\ext4.vhdx"
+        if exist "!vhdx!" (
+            echo !vhdx!>> "%listfile%"
+        )
+    )
 )
 
 :: Count files
@@ -40,7 +41,7 @@ set "count=0"
 for /f "usebackq delims=" %%F in ("%listfile%") do set /a count+=1
 
 if %count% equ 0 (
-    echo No ext4.vhdx files found. Exiting.
+    echo No ext4.vhdx files found via the registry. Exiting.
     if exist "%listfile%" del "%listfile%"
     exit /b
 )
